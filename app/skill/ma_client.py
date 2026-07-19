@@ -15,6 +15,7 @@ system token (which is scoped to MA's WebSocket protocol, not this
 REST wrapper).
 """
 
+import difflib
 import logging
 import os
 
@@ -90,16 +91,41 @@ def list_players():
     return result if isinstance(result, list) else []
 
 
-def search(query, media_types=None, limit=5):
-    """Search MA's library across all connected providers. Returns the raw
-    SearchResults dict (keys: artists, albums, genres, tracks, playlists,
-    radio, audiobooks, podcasts), each a list of MediaItems.
-    """
+def _raw_search(query, media_types=None, limit=5):
     args = {'search_query': query, 'limit': limit}
     if media_types:
         args['media_types'] = media_types
     result = call('music/search', args)
     return result if isinstance(result, dict) else {}
+
+
+def search(query, media_types=None, limit=5):
+    """Search MA's library across all connected providers. Returns the raw
+    SearchResults dict (keys: artists, albums, genres, tracks, playlists,
+    radio, audiobooks, podcasts), each a list of MediaItems.
+
+    MA appears to AND-match every word in the query - a single misheard word
+    (Alexa's ASR on a non-English locale mangles English titles fairly often,
+    e.g. "Principles of Lust" heard as "principles of last") blanks the
+    entire result even though the rest of the title matches fine. If the
+    full query comes back empty, retry with just its longest word - the
+    most distinctive and least likely to have been misheard - before giving
+    up. pick_best_match() then fuzzy-scores candidates against the *original*
+    query, so this fallback only surfaces something if it's actually close.
+    """
+    result = _raw_search(query, media_types=media_types, limit=limit)
+    if any(result.get(k) for k in ('tracks', 'artists', 'albums')):
+        return result
+
+    words = [w for w in (query or '').split() if len(w) > 2]
+    if not words:
+        return result
+    longest = max(words, key=len)
+    if longest.casefold() == (query or '').strip().casefold():
+        return result
+
+    logger.info("No MA results for %r, retrying with longest word %r", query, longest)
+    return _raw_search(longest, media_types=media_types, limit=limit)
 
 
 def pick_best_match(results, query=None):
@@ -112,8 +138,14 @@ def pick_best_match(results, query=None):
     An exact (case-insensitive) name match - most often an artist, since
     a single/short query is usually "play music by X" - is a much
     stronger signal of intent than category order, so it's checked first.
-    Falls back to the original track > artist > album order when nothing
-    matches exactly. Returns (item, kind) with kind in
+
+    Otherwise picks whichever candidate's name is textually closest to the
+    query (a plain string-similarity ratio, not MA's own relevance scoring -
+    MA already narrowed the field down by matching *some* word, this just
+    picks the best of what's left). Guards against a low-confidence pick
+    (e.g. two unrelated words happening to share one token) with a minimum
+    similarity threshold; below that, falls back to the original
+    track > artist > album order. Returns (item, kind) with kind in
     {'track', 'artist', 'album'}, or (None, None) if nothing usable was found.
     """
     query_norm = (query or '').strip().casefold()
@@ -124,6 +156,19 @@ def pick_best_match(results, query=None):
                 name = (item.get('name') or '').strip().casefold()
                 if name == query_norm and item.get('is_playable', True) and item.get('uri'):
                     return item, kind.rstrip('s')
+
+    if query_norm:
+        best_item, best_kind, best_score = None, None, 0.0
+        for kind in ('tracks', 'artists', 'albums'):
+            for item in results.get(kind) or []:
+                if not (item.get('is_playable', True) and item.get('uri')):
+                    continue
+                name = (item.get('name') or '').strip().casefold()
+                score = difflib.SequenceMatcher(None, query_norm, name).ratio()
+                if score > best_score:
+                    best_item, best_kind, best_score = item, kind.rstrip('s'), score
+        if best_item and best_score >= 0.5:
+            return best_item, best_kind
 
     for kind in ('tracks', 'artists', 'albums'):
         items = results.get(kind) or []
