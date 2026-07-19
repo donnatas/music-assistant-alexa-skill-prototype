@@ -1,5 +1,5 @@
 import os
-from flask import Flask, request, jsonify, Response, g
+from flask import Flask, request, jsonify, Response, g, redirect
 from flask_ask_sdk.skill_adapter import SkillAdapter
 from skill.lambda_function import sb  # sb is the SkillBuilder from skill/lambda_function.py
 import json
@@ -312,6 +312,15 @@ def _setup_reader_thread(proc, prefix=None):
 def _read_master_loop(master_fd, prefix=None):
     # Delegate implementation to helpers while binding enqueue function
     return _helpers_read_master_loop(master_fd, _enqueue_setup_log, prefix=prefix)
+
+
+@app.route("/", methods=["GET"])
+def index():
+    # / is the Alexa Skill Kit webhook (POST-only). A browser landing here -
+    # notably HA's ingress iframe, which always opens the bare ingress root -
+    # gets nothing to render otherwise, so send it to the actual status page.
+    # Relative (no leading slash) so it stays under the ingress path prefix.
+    return redirect("status")
 
 
 @app.route("/", methods=["POST"])
