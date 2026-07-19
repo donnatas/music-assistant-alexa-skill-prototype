@@ -338,9 +338,10 @@ class PlaySearchIntentHandler(AbstractRequestHandler):
     connected providers, e.g. Jellyfin) for a free-text query and play the
     best match on whichever MA player is mapped to the Echo that asked.
 
-    Prefers an exact-ish track match ("spiele Bohemian Rhapsody") over an
-    artist match ("spiele Queen"), then falls back to albums - matching how
-    people naturally ask for either a specific song or "some music by X".
+    Prefers an exact name match (most often an artist - "spiele Queen") over
+    a same-word-in-the-title track ("spiele Bohemian Rhapsody"), then falls
+    back to the first playable track/artist/album - matching how people
+    naturally ask for either a specific song or "some music by X".
     """
     def can_handle(self, handler_input):
         # type: (HandlerInput) -> bool
@@ -374,7 +375,7 @@ class PlaySearchIntentHandler(AbstractRequestHandler):
             ).set_should_end_session(True)
             return handler_input.response_builder.response
 
-        item, kind = ma_client.pick_best_match(results)
+        item, kind = ma_client.pick_best_match(results, query)
         if not item:
             handler_input.response_builder.speak(
                 f"Ich habe nichts zu \"{query}\" gefunden."

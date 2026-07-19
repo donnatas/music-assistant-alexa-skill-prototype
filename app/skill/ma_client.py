@@ -102,14 +102,29 @@ def search(query, media_types=None, limit=5):
     return result if isinstance(result, dict) else {}
 
 
-def pick_best_match(results):
+def pick_best_match(results, query=None):
     """Pick a single item to play from search() results.
 
-    Prefers a track match (the literal "play this song" interpretation),
-    then an artist match ("play music by X"), then an album match. Returns
-    (item, kind) with kind in {'track', 'artist', 'album'}, or (None, None)
-    if nothing usable was found.
+    MA's search matches the query against any metadata field (title,
+    album, etc.), so a plain "first track" pick can return an unrelated
+    song that merely contains the query word (e.g. searching "queen"
+    returning Madonna's song "Queen" ahead of the actual artist Queen).
+    An exact (case-insensitive) name match - most often an artist, since
+    a single/short query is usually "play music by X" - is a much
+    stronger signal of intent than category order, so it's checked first.
+    Falls back to the original track > artist > album order when nothing
+    matches exactly. Returns (item, kind) with kind in
+    {'track', 'artist', 'album'}, or (None, None) if nothing usable was found.
     """
+    query_norm = (query or '').strip().casefold()
+    if query_norm:
+        for kind in ('artists', 'tracks', 'albums'):
+            items = results.get(kind) or []
+            for item in items:
+                name = (item.get('name') or '').strip().casefold()
+                if name == query_norm and item.get('is_playable', True) and item.get('uri'):
+                    return item, kind.rstrip('s')
+
     for kind in ('tracks', 'artists', 'albums'):
         items = results.get(kind) or []
         for item in items:
