@@ -72,8 +72,16 @@ def get_in_progress_items(limit=5):
 
 
 def play_media(queue_id, uri):
-    """Start playback of the given media URI on the given player queue."""
-    call('player_queues/play_media', {'queue_id': queue_id, 'media': uri})
+    """Start playback of the given media URI on the given player queue.
+
+    Short timeout: play_media's return_type is null (fire-and-forget - MA
+    queues the command and returns immediately, the actual stream doesn't
+    show up until it separately pushes to this skill's /ma/push-url). A
+    slow/hanging response here means something's wrong on MA's side, not
+    that it's still "working on it" - no reason to make the caller (and
+    Alexa's own retry logic) wait a full 10s to find that out.
+    """
+    call('player_queues/play_media', {'queue_id': queue_id, 'media': uri}, timeout=4)
 
 
 def list_players():
